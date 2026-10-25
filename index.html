@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>沪指日报</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="沪指日报">
+<meta name="theme-color" content="#2f5bd3">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#6b7280;--line:#e5e7eb;--accent:#2f5bd3;--up:#d23c3c;--down:#1f9d55;--chip:#eef2ff}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#171b23;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a303c;--accent:#7c9cff;--up:#ff6b6b;--down:#3ccf7f;--chip:#232a3a}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,"PingFang SC","Helvetica Neue",sans-serif}
+header{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top) + 8px) 16px 8px;background:var(--card);border-bottom:1px solid var(--line);z-index:5}
+header b{font-size:17px}header .st{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+main{position:fixed;top:calc(env(safe-area-inset-top) + 58px);bottom:calc(env(safe-area-inset-bottom) + 56px);left:0;right:0;overflow:auto;-webkit-overflow-scrolling:touch}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;border:0;background:none;color:var(--muted);font-size:12px;padding:8px 0 6px}
+nav button .i{display:block;font-size:20px;line-height:24px}nav button.on{color:var(--accent);font-weight:600}
+.pane{display:none;padding:12px 16px 24px}.pane.on{display:block}
+#p-report{padding:0;height:100%}#p-report.on{display:flex;flex-direction:column}
+iframe{border:0;width:100%;flex:1;background:var(--bg)}
+.bar{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card);overflow-x:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 12px}
+h2{font-size:16px;margin:0 0 8px;padding-left:10px;border-left:4px solid var(--accent)}
+.btn{display:inline-block;border:0;border-radius:10px;padding:10px 14px;font-size:15px;background:var(--accent);color:#fff;font-weight:600}
+.btn.sec{background:var(--chip);color:var(--accent)}.btn.red{background:var(--up)}.btn.green{background:var(--down)}
+.btn:disabled{opacity:.5}.wide{width:100%;margin-top:8px}
+.muted{color:var(--muted);font-size:13px}.chip{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--chip);font-size:12px;margin:2px 4px 2px 0}
+.list a{display:block;padding:12px 2px;border-bottom:1px solid var(--line);color:var(--fg);text-decoration:none}
+.ev{border-bottom:1px dashed var(--line);padding:10px 0}.ev .t{font-weight:600}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+select,input{font-size:15px;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:100%}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;border-bottom:1px solid var(--line);text-align:left}
+.tw{overflow-x:auto}.ok{color:var(--down)}.bad{color:var(--up)}
+#setup{position:fixed;inset:0;background:var(--bg);z-index:9;padding:calc(env(safe-area-inset-top) + 24px) 16px;display:none;overflow:auto}
+</style>
+</head>
+<body>
+<header><b>沪指日报</b><div class="st" id="hdr">加载中…</div></header>
+<main>
+  <section class="pane on" id="p-report">
+    <div class="bar"><button class="btn sec" onclick="showReport()">最新</button><button class="btn sec" onclick="showList('dated')">历史日报</button><button class="btn sec" onclick="openFile('1-历史样本库.html')">样本库</button></div>
+    <iframe id="frame" title="报告"></iframe>
+  </section>
+  <section class="pane" id="p-events"><div class="card"><h2>待确认的事件</h2><div class="muted">大模型建议纳入或标为“待确认”、你还没有决定的事件。宏观事件决定加仓和开空，负面冲击要当晚确认，次日开盘才能执行。</div><div id="evlist" style="margin-top:8px"></div><button class="btn wide" id="recalc" style="display:none" onclick="dispatch('recompute')">按确认的事件重新分析</button></div></section>
+  <section class="pane" id="p-run">
+    <div class="card"><h2>运行状态</h2><div id="status" class="muted">—</div></div>
+    <div class="card"><h2>出今天的报告</h2><div class="muted">在北京时间15:30收盘、数据更新后运行，约3—5分钟。当天已有报告（Mac 或定时任务已出）会自动跳过。</div>
+      <label class="row"><input type="checkbox" id="force"> 已有报告也重新出</label>
+      <button class="btn wide" onclick="dispatch('daily')">出今天的报告</button>
+      <div id="runinfo" class="muted" style="margin-top:10px"></div></div>
+  </section>
+  <section class="pane" id="p-more">
+    <div class="card"><h2>复盘与重测</h2><div class="list" id="reviews"></div></div>
+    <div class="card"><h2>判断日志</h2><div class="tw" id="log"></div></div>
+    <div class="card"><h2>推送通知</h2><div class="muted">报告出来、出现待确认的负面冲击时通知你。需先把本页“添加到主屏幕”，再从主屏幕图标打开后开启。</div><button class="btn wide sec" id="pushbtn" onclick="enablePush()">开启推送通知</button></div>
+    <div class="card"><h2>设置</h2><button class="btn wide sec" onclick="setup(true)">更换 GitHub 令牌</button><div class="muted" style="margin-top:8px">数据保存在私有仓库 wgzhuchina/huzhi-rules，令牌只保存在本机。</div></div>
+  </section>
+</main>
+<nav>
+  <button class="on" data-p="p-report"><span class="i">📄</span>日报</button>
+  <button data-p="p-events"><span class="i">✅</span>待确认<span id="evn"></span></button>
+  <button data-p="p-run"><span class="i">▶️</span>运行</button>
+  <button data-p="p-more"><span class="i">⋯</span>更多</button>
+</nav>
+<div id="setup">
+  <h2>首次设置</h2>
+  <p>请粘贴 GitHub 细粒度令牌（Fine-grained token），只授权仓库 <b>huzhi-rules</b>，权限：<b>Contents：读写</b>、<b>Actions：读写</b>。令牌只保存在这台手机上。</p>
+  <input id="tokin" placeholder="github_pat_…" style="width:100%" autocapitalize="off" autocomplete="off">
+  <button class="btn wide" onclick="saveToken()">保存并进入</button>
+  <div id="tokerr" class="bad" style="margin-top:8px"></div>
+</div>
+<script>
+const R = "wgzhuchina/huzhi-rules", BASE = "docs/规律库/daily", WF = "daily.yml";
+const VAPID = "BNfPjxsF5v0YOgfhiqRpg3Rk3WHR2jeoWSyKnHZ_lxOy1LEBmXPFV8AfJ7NPNHvUq7snTIOlqbnOFKxW0Fhz77w";
+const CATS = ["负面外部冲击", "监管救市", "货币宽松", "财政刺激", "监管收紧", "国内紧缩", "其他"];
+const $ = (id) => document.getElementById(id);
+const enc = (p) => p.split("/").map(encodeURIComponent).join("/");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let ST = null;
+
+async function gh(path, opt = {}) {
+  const r = await fetch("https://api.github.com" + path, {
+    method: opt.method || "GET", body: opt.body, cache: "no-store",
+    headers: { Authorization: "Bearer " + localStorage.getItem("tok"), Accept: opt.accept || "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+  });
+  if (!r.ok) throw new Error(r.status + " " + (await r.text()).slice(0, 160));
+  if (opt.raw) return r.text();
+  return r.status === 204 ? null : r.json();
+}
+const raw = (p) => gh(`/repos/${R}/contents/${enc(p)}?t=${Date.now()}`, { accept: "application/vnd.github.raw", raw: true });
+const b64 = (t) => { const b = new TextEncoder().encode(t); let s = ""; for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode.apply(null, b.subarray(i, i + 8192)); return btoa(s); };
+const unb64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, "")), (c) => c.charCodeAt(0)));
+
+async function updateFile(path, fn, msg) {
+  for (let i = 0; i < 3; i++) {
+    let sha, old = null;
+    try { const m = await gh(`/repos/${R}/contents/${enc(path)}?t=${Date.now()}`); sha = m.sha; old = unb64(m.content); } catch (e) { if (!String(e.message).startsWith("404")) throw e; }
+    try { return await gh(`/repos/${R}/contents/${enc(path)}`, { method: "PUT", body: JSON.stringify({ message: msg, content: b64(fn(old)), sha }) }); }
+    catch (e) { if (!/^(409|422)/.test(e.message)) throw e; }
+  }
+  throw new Error("文件正被其他运行修改，请稍后再试");
+}
+
+function setup(force) { $("setup").style.display = force || !localStorage.getItem("tok") ? "block" : "none"; }
+async function saveToken() {
+  localStorage.setItem("tok", $("tokin").value.trim());
+  try { await gh(`/repos/${R}`); $("setup").style.display = "none"; boot(); }
+  catch (e) { $("tokerr").textContent = "令牌无法访问仓库：" + e.message; }
+}
+
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("on", p.id === b.dataset.p));
+  if (b.dataset.p === "p-more") loadMore();
+  if (b.dataset.p === "p-run") loadStatus();
+});
+
+async function openFile(name) {
+  const f = $("frame");
+  f.srcdoc = "<p style='font:15px -apple-system;padding:16px;color:#888'>加载中…</p>";
+  try { f.srcdoc = await raw(`${BASE}/reports/${name}`); } catch (e) { f.srcdoc = `<p style='padding:16px'>没有找到 ${esc(name)}：${esc(e.message)}</p>`; }
+}
+const showReport = () => openFile("0-最新报告.html");
+
+async function listReports() {
+  const xs = await gh(`/repos/${R}/contents/${enc(BASE + "/reports")}?t=${Date.now()}`);
+  return xs.map((x) => x.name).filter((n) => n.endsWith(".html"));
+}
+async function showList(kind) {
+  const names = (await listReports()).filter((n) => /^\d{4}-\d\d-\d\d/.test(n)).sort().reverse();
+  $("frame").srcdoc = `<style>body{font:15px -apple-system;margin:0;padding:8px 16px;background:${getComputedStyle(document.body).backgroundColor};color:${getComputedStyle(document.body).color}}a{display:block;padding:12px 0;border-bottom:1px solid #8884;color:inherit;text-decoration:none}</style>`
+    + names.map((n) => `<a href="#" onclick="parent.openFile('${n}');return false">${n.replace(".html", "").replace("-deepseek", "（DeepSeek）").replace("-none", "（仅定量）")}</a>`).join("");
+}
+
+async function loadStatus() {
+  try {
+    ST = JSON.parse(await raw(`${BASE}/reports/status.json`));
+    $("status").innerHTML = `<b>${esc(ST.message)}</b><br>${esc(ST.time)}（北京时间）`;
+    $("hdr").textContent = `${ST.time.slice(5)}　${ST.message}`;
+  } catch (e) { $("status").textContent = "尚无云端运行记录"; $("hdr").textContent = "尚无云端运行记录（可在“运行”中出报告）"; }
+  try {
+    const r = await gh(`/repos/${R}/actions/workflows/${WF}/runs?per_page=1&t=${Date.now()}`);
+    const x = r.workflow_runs[0];
+    if (x) {
+      const st = { queued: "排队中", in_progress: "运行中", completed: x.conclusion === "success" ? "已完成" : "失败" }[x.status] || x.status;
+      $("runinfo").innerHTML = `最近一次云端运行：${st}　${new Date(x.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}<br><a href="${x.html_url}" target="_blank">查看运行记录</a>`;
+      return x;
+    }
+  } catch (e) { $("runinfo").textContent = "无法读取运行记录：" + e.message; }
+}
+
+async function dispatch(mode) {
+  if (!confirm(mode === "recompute" ? "按已确认的事件重新分析并出报告？" : "现在运行，出今天的报告？")) return;
+  try {
+    await gh(`/repos/${R}/actions/workflows/${WF}/dispatches`, { method: "POST", body: JSON.stringify({ ref: "main", inputs: { mode, force: $("force").checked ? "true" : "false" } }) });
+    document.querySelector('nav button[data-p="p-run"]').click();
+    $("runinfo").textContent = "已提交，等待云端开始…";
+    poll(Date.now());
+  } catch (e) { alert("启动失败：" + e.message); }
+}
+async function poll(t0) {
+  const x = await loadStatus();
+  if (x && x.status === "completed" && new Date(x.created_at).getTime() > t0 - 60000) { await loadStatus(); showReport(); loadEvents(); return; }
+  if (Date.now() - t0 < 15 * 60000) setTimeout(() => poll(t0), 10000);
+}
+
+// 两段文字的相似度（二字组重合比例），用于判断事件库中是否已有同一事件
+function grams(s) { const t = String(s).replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, ""); const g = new Set(); for (let i = 0; i < t.length - 1; i++) g.add(t.slice(i, i + 2)); return g; }
+function similar(a, b) { const x = grams(a), y = grams(b); if (!x.size || !y.size) return false; let n = 0; x.forEach((g) => { if (y.has(g)) n++; }); return n / Math.min(x.size, y.size) >= 0.5; }
+function nextWeekday(d) { const x = new Date(d + "T00:00:00"); do { x.setDate(x.getDate() + 1); } while ([0, 6].includes(x.getDay())); return x.toISOString().slice(0, 10); }
+function csvLine(a) { return a.map((v) => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v).join(","); }
+let EVS = [];
+async function loadEvents() {
+  try {
+    if (!ST) ST = JSON.parse(await raw(`${BASE}/reports/status.json`));
+    const day = ST.asof;
+    let a = null;
+    for (const p of ["deepseek", "claude"]) { try { a = JSON.parse(await raw(`${BASE}/analysis/${day}.${p}.json`)); break; } catch (e) { } }
+    const lib = await raw("docs/规律库/data/事件库.csv");
+    const done = lib.replace(/^\ufeff/, "").trim().split("\n").slice(1).map((l) => parseCsv(l)[2] || "");
+    EVS = (a?.news || []).filter((n) => /^(是|待确认)/.test(n["是否建议纳入"] || "") && !done.some((d) => similar(d, n["事件"])));
+    $("evn").textContent = EVS.length ? `（${EVS.length}）` : "";
+    $("evlist").innerHTML = EVS.length ? EVS.map((n, i) => {
+      const cat = CATS.find((c) => (n["建议类别"] || "").includes(c)) || "其他";
+      return `<div class="ev" id="ev${i}"><div class="t">${esc(n["事件"])}</div>
+        <div class="muted">大模型建议：${esc(n["建议类别"])}·${esc(n["是否建议纳入"])}　来源：${esc(n["来源"])}</div>
+        <div class="row"><select id="cat${i}">${CATS.map((c) => `<option ${c === cat ? "selected" : ""}>${c}</option>`).join("")}</select>
+        <span class="muted">反应日</span><input type="date" id="rd${i}" value="${nextWeekday(day)}"></div>
+        <div class="row"><button class="btn green" onclick="decide(${i},'是')">纳入</button><button class="btn sec" onclick="decide(${i},'否')">不纳入</button></div></div>`;
+    }).join("") : `<p class="muted">${day} 没有待确认的事件。</p>`;
+  } catch (e) { $("evlist").innerHTML = `<p class="muted">无法读取：${esc(e.message)}</p>`; }
+}
+async function decide(i, yes) {
+  const n = EVS[i], cat = $("cat" + i).value, rd = $("rd" + i).value;
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
+  const row = csvLine([today, yes === "是" ? rd : "", n["事件"], cat, yes, `用户${today}在App中确认；大模型建议：${n["建议类别"]}·${n["是否建议纳入"]}`, n["来源"] || ""]);
+  try {
+    await updateFile("docs/规律库/data/事件库.csv", (old) => (old || "日期,反应日,事件,类别,是否纳入,依据或说明,来源可靠度\n").replace(/\n?$/, "\n") + row + "\n", `App确认事件：${yes === "是" ? "纳入" : "不纳入"}`);
+    $("ev" + i).innerHTML = `<div class="muted">${esc(n["事件"])}</div><div class="${yes === "是" ? "ok" : ""}">已记录：${yes === "是" ? "纳入（" + cat + "，反应日" + rd + "）" : "不纳入"}</div>`;
+    $("recalc").style.display = "block";
+  } catch (e) { alert("写入失败：" + e.message); }
+}
+
+async function loadMore() {
+  try {
+    const names = (await listReports()).filter((n) => /^[34]-/.test(n)).sort().reverse();
+    $("reviews").innerHTML = names.length ? names.map((n) => `<a href="#" onclick="document.querySelector('nav button').click();openFile('${n}');return false">${n.replace(".html", "").replace(/^\d-/, "")}</a>`).join("") : "<p class='muted'>暂无</p>";
+  } catch (e) { $("reviews").textContent = e.message; }
+  try {
+    const t = (await raw(`${BASE}/判断日志.csv`)).replace(/^﻿/, "").trim().split("\n");
+    const rows = t.map(parseCsv), h = rows[0];
+    const cols = ["日期", "分析来源", "立场", "建议仓位", "空单建议", "20日上涨概率", "实际20日涨跌", "判断是否正确"].map((c) => h.indexOf(c));
+    $("log").innerHTML = `<table><tr>${cols.map((c) => `<th>${esc(h[c])}</th>`).join("")}</tr>${rows.slice(1).reverse().slice(0, 40).map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c])}</td>`).join("")}</tr>`).join("")}</table>`;
+  } catch (e) { $("log").textContent = "暂无判断日志"; }
+}
+function parseCsv(line) { const out = []; let cur = "", q = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (q) { if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; } else if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } out.push(cur); return out; }
+
+function urlB64(s) { const p = "=".repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
+async function enablePush() {
+  try {
+    if (!("PushManager" in window)) return alert("请先把本页添加到主屏幕，再从主屏幕图标打开后开启（iOS 16.4 以上）。");
+    if (await Notification.requestPermission() !== "granted") return alert("未允许通知。");
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64(VAPID) });
+    const s = sub.toJSON();
+    await updateFile(`${BASE}/push/subscriptions.json`, (old) => { const xs = (old ? JSON.parse(old) : []).filter((x) => x.endpoint !== s.endpoint); xs.push(s); return JSON.stringify(xs, null, 1); }, "App订阅推送");
+    $("pushbtn").textContent = "推送通知已开启"; $("pushbtn").disabled = true;
+  } catch (e) { alert("开启失败：" + e.message); }
+}
+
+async function boot() {
+  setup(false);
+  if (!localStorage.getItem("tok")) return;
+  await loadStatus();
+  showReport();
+  loadEvents();
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+boot();
+</script>
+</body>
+</html>
