@@ -70,6 +70,10 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;b
       <div id="runinfo" class="muted" style="margin-top:10px"></div></div>
   </section>
   <section class="pane" id="p-more">
+    <div class="card"><h2>主要矛盾</h2><div class="muted">你认定的主要矛盾，每天用新闻和关联板块验证，结果见日报“你的主要矛盾判断”。</div><div id="clist"></div>
+      <button class="btn wide sec" onclick="editC()">添加主要矛盾</button><div id="cform"></div></div>
+    <div class="card"><h2>关注板块</h2><div class="muted">决定仓位里持有什么；新加的板块在下一次运行后才有数据。</div><div id="wlist"></div>
+      <button class="btn wide sec" onclick="editW()">添加关注板块</button><div id="wform"></div></div>
     <div class="card"><h2>复盘与重测</h2><div class="list" id="reviews"></div></div>
     <div class="card"><h2>判断日志</h2><div class="tw" id="log"></div></div>
     <div class="card"><h2>推送通知</h2><div class="muted">报告出来、出现待确认的负面冲击时通知你。需先把本页“添加到主屏幕”，再从主屏幕图标打开后开启。</div><button class="btn wide sec" id="pushbtn" onclick="enablePush()">开启推送通知</button></div>
@@ -241,7 +245,75 @@ async function decide(i, yes) {
   } catch (e) { alert("写入失败：" + e.message); }
 }
 
+// ---------- 主要矛盾与关注板块的管理 ----------
+const CF = `${BASE}/主要矛盾.json`, WF2 = `${BASE}/关注板块.json`;
+const SECTORS = ["中证银行", "能源", "材料", "工业", "可选消费", "主要消费", "医药", "金融地产", "信息技术", "通信", "公用事业", "其他（填中证指数代码）"];
+let CL = [], WL = [];
+const lines = (t) => String(t || "").split(/\n|；|;/).map((x) => x.trim()).filter(Boolean);
+const words = (t) => String(t || "").split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
+async function loadManage() {
+  try { CL = JSON.parse(await raw(CF)); } catch (e) { CL = []; }
+  try { WL = JSON.parse(await raw(WF2)); } catch (e) { WL = []; }
+  const item = (x, kind, i) => `<div class="ev"><div class="t">${esc(x.name)} <span class="chip">${esc(x.status || "")}</span></div>
+    <div class="muted">${esc(x.statement || x.thesis || "")}</div>
+    <div class="row"><button class="btn sec" onclick="edit${kind}(${i})">修改</button>
+    <button class="btn sec" onclick="toggle${kind}(${i})">${/停用|存疑/.test(x.status) ? "启用" : "停用"}</button>
+    <button class="btn red" onclick="del${kind}(${i})">删除</button></div></div>`;
+  $("clist").innerHTML = CL.map((x, i) => x.status === "已删除" ? "" : item(x, "C", i)).join("") || "<p class='muted'>还没有</p>";
+  $("wlist").innerHTML = WL.map((x, i) => x.status === "已删除" ? "" : item(x, "W", i)).join("") || "<p class='muted'>还没有</p>";
+}
+async function saveList(path, list, msg) { await updateFile(path, () => JSON.stringify(list, null, 1), msg); await loadManage(); }
+function editC(i) {
+  const x = i === undefined ? { name: "", statement: "", linked_sectors: [], expected: "", invalid: [], keywords: [] } : CL[i];
+  $("cform").innerHTML = `<div class="ev"><input id="c_name" placeholder="名称，如：化债" value="${esc(x.name)}" style="width:100%">
+    <input id="c_st" placeholder="你的判断" value="${esc(x.statement)}" style="width:100%;margin-top:6px">
+    <input id="c_link" placeholder="关联的关注板块（逗号分隔，如：银行）" value="${esc((x.linked_sectors || []).join("，"))}" style="width:100%;margin-top:6px">
+    <input id="c_exp" placeholder="预期的市场影响" value="${esc(x.expected || "")}" style="width:100%;margin-top:6px">
+    <input id="c_inv" placeholder="失效条件（用分号分隔）" value="${esc((x.invalid || []).join("；"))}" style="width:100%;margin-top:6px">
+    <input id="c_kw" placeholder="新闻关键词（逗号分隔）" value="${esc((x.keywords || []).join("，"))}" style="width:100%;margin-top:6px">
+    <button class="btn wide" onclick="saveC(${i === undefined ? -1 : i})">保存</button></div>`;
+}
+async function saveC(i) {
+  const name = $("c_name").value.trim();
+  if (!name) return alert("请填写名称");
+  const x = Object.assign(i >= 0 ? CL[i] : { status: "有效", start: todayBJ() }, { name, statement: $("c_st").value.trim(), linked_sectors: words($("c_link").value),
+    expected: $("c_exp").value.trim(), invalid: lines($("c_inv").value), keywords: words($("c_kw").value) });
+  if (i < 0) CL.push(x);
+  try { await saveList(CF, CL, `App${i < 0 ? "添加" : "修改"}主要矛盾：${name}`); $("cform").innerHTML = "<div class='ok'>已保存</div>"; } catch (e) { alert("保存失败：" + e.message); }
+}
+async function toggleC(i) { CL[i].status = CL[i].status === "存疑" ? "有效" : "存疑"; await saveList(CF, CL, `App更改主要矛盾状态：${CL[i].name}`); }
+async function delC(i) { if (!confirm(`删除主要矛盾“${CL[i].name}”？（验证记录保留）`)) return; CL[i].status = "已删除"; await saveList(CF, CL, `App删除主要矛盾：${CL[i].name}`); }
+function editW(i) {
+  const x = i === undefined ? { name: "", thesis: "", status: "关注", source: {}, invalid_tech: { metric: "ex60", below: -5 }, invalid_macro: [], keywords: [] } : WL[i];
+  const cur = x.source?.file || x.source?.sector || "", t = x.invalid_tech || {};
+  $("wform").innerHTML = `<div class="ev"><input id="w_name" placeholder="名称，如：银行" value="${esc(x.name)}" style="width:100%">
+    <div class="row"><span>对应指数</span><select id="w_src" onchange="$('w_code').style.display=this.value.startsWith('其他')?'inline-block':'none'">${SECTORS.map((n) => `<option ${n === cur ? "selected" : ""}>${n}</option>`).join("")}</select>
+    <input id="w_code" placeholder="中证指数代码" value="${esc(x.source?.csindex && x.source.file !== "中证银行" ? x.source.csindex : "")}" style="width:120px;display:none"></div>
+    <input id="w_th" placeholder="你的判断" value="${esc(x.thesis)}" style="width:100%;margin-top:6px">
+    <div class="row"><span>状态</span><select id="w_st">${["关注", "观察"].map((n) => `<option ${n === x.status ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+    <div class="row"><span>技术失效：60日超额</span><select id="w_dir"><option value="below" ${"below" in t ? "selected" : ""}>低于</option><option value="above" ${"above" in t ? "selected" : ""}>高于</option></select>
+      <input id="w_th2" type="number" value="${t.below ?? t.above ?? -5}" style="width:70px">%</div>
+    <input id="w_inv" placeholder="宏观失效条件（用分号分隔）" value="${esc((x.invalid_macro || []).join("；"))}" style="width:100%;margin-top:6px">
+    <input id="w_kw" placeholder="新闻关键词（逗号分隔）" value="${esc((x.keywords || []).join("，"))}" style="width:100%;margin-top:6px">
+    <button class="btn wide" onclick="saveW(${i === undefined ? -1 : i})">保存</button></div>`;
+}
+async function saveW(i) {
+  const name = $("w_name").value.trim(), src = $("w_src").value, dir = $("w_dir").value, v = Number($("w_th2").value);
+  if (!name) return alert("请填写名称");
+  let source = {};
+  if (src === "中证银行") source = { csindex: "399986", file: "中证银行" };
+  else if (src.startsWith("其他")) { const code = $("w_code").value.trim(); if (!code) return alert("请填写中证指数代码"); source = { csindex: code, file: name }; }
+  else source = { sector: src };
+  const x = Object.assign(i >= 0 ? WL[i] : { start: todayBJ() }, { name, source, thesis: $("w_th").value.trim(), status: $("w_st").value,
+    invalid_tech: { metric: "ex60", [dir]: v, text: `${name}相对沪指60日超额${dir === "below" ? "跌破" : "高于"}${v}%` }, invalid_macro: lines($("w_inv").value), keywords: words($("w_kw").value) || [name] });
+  if (i < 0) WL.push(x);
+  try { await saveList(WF2, WL, `App${i < 0 ? "添加" : "修改"}关注板块：${name}`); $("wform").innerHTML = "<div class='ok'>已保存，下一次运行后生效</div>"; } catch (e) { alert("保存失败：" + e.message); }
+}
+async function toggleW(i) { WL[i].status = WL[i].status === "停用" ? "关注" : "停用"; await saveList(WF2, WL, `App更改关注板块状态：${WL[i].name}`); }
+async function delW(i) { if (!confirm(`删除关注板块“${WL[i].name}”？（验证记录保留）`)) return; WL[i].status = "已删除"; await saveList(WF2, WL, `App删除关注板块：${WL[i].name}`); }
+
 async function loadMore() {
+  loadManage();
   try {
     const names = (await listReports()).filter((n) => /^[34]-/.test(n)).sort().reverse();
     $("reviews").innerHTML = names.length ? names.map((n) => `<a href="#" onclick="document.querySelector('nav button').click();openFile('${n}');return false">${n.replace(".html", "").replace(/^\d-/, "")}</a>`).join("") : "<p class='muted'>暂无</p>";

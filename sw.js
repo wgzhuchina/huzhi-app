@@ -1,5 +1,5 @@
 // 沪指日报 App：缓存界面（网络优先，离线时用缓存），接收推送通知
-const C = "huzhi-v3";
+const C = "huzhi-v4";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(C).then((c) => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener("activate", (e) => {
