@@ -47,6 +47,21 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;b
     <iframe id="frame" title="报告"></iframe>
   </section>
   <section class="pane" id="p-events"><div class="card"><h2>待确认的事件</h2><div class="muted">大模型建议纳入或标为“待确认”、你还没有决定的事件。宏观事件决定加仓和开空，负面冲击要当晚确认，次日开盘才能执行。</div><div id="evlist" style="margin-top:8px"></div><button class="btn wide" id="recalc" style="display:none" onclick="dispatch('recompute')">按确认的事件重新分析</button></div></section>
+  <section class="pane" id="p-op">
+    <div class="card"><h2>记录实际操作</h2>
+      <div id="opsugg" class="muted">—</div>
+      <div class="row"><span>执行日</span><input type="date" id="opd" onchange="loadSugg()"></div>
+      <div class="row"><span>现货实际仓位</span><input type="number" id="opspot" min="0" max="100" step="5" style="width:90px" oninput="checkDev()">%</div>
+      <div class="row"><span>空单</span><select id="opshort" onchange="checkDev()"><option>无</option><option>期货空单</option><option>认沽</option><option>已平仓</option></select>
+        <input type="number" id="opn" min="0" step="1" style="width:80px" placeholder="手或张"></div>
+      <input id="opnote" placeholder="操作说明，如：卖出部分沪深300ETF，降至30%" style="width:100%;margin-top:8px">
+      <div id="opdev" style="margin-top:8px"></div>
+      <input id="opwhy" placeholder="与建议不一致的原因（可选）" style="width:100%;margin-top:8px">
+      <button class="btn wide" onclick="saveOp()">保存</button>
+      <div class="muted" style="margin-top:8px">月度复盘会统计照建议执行的比例，以及偏离建议的操作事后是否有利。</div>
+    </div>
+    <div class="card"><h2>最近记录</h2><div class="tw" id="oplist"></div></div>
+  </section>
   <section class="pane" id="p-run">
     <div class="card"><h2>运行状态</h2><div id="status" class="muted">—</div></div>
     <div class="card"><h2>出今天的报告</h2><div class="muted">在北京时间15:30收盘、数据更新后运行，约3—5分钟。当天已有报告（Mac 或定时任务已出）会自动跳过。</div>
@@ -64,6 +79,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;b
 <nav>
   <button class="on" data-p="p-report"><span class="i">📄</span>日报</button>
   <button data-p="p-events"><span class="i">✅</span>待确认<span id="evn"></span></button>
+  <button data-p="p-op"><span class="i">📝</span>记录</button>
   <button data-p="p-run"><span class="i">▶️</span>运行</button>
   <button data-p="p-more"><span class="i">⋯</span>更多</button>
 </nav>
@@ -118,6 +134,7 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("on", p.id === b.dataset.p));
   if (b.dataset.p === "p-more") loadMore();
   if (b.dataset.p === "p-run") loadStatus();
+  if (b.dataset.p === "p-op") loadOps();
 });
 
 async function openFile(name) {
@@ -219,6 +236,57 @@ async function loadMore() {
   } catch (e) { $("log").textContent = "暂无判断日志"; }
 }
 function parseCsv(line) { const out = []; let cur = "", q = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (q) { if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; } else if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } out.push(cur); return out; }
+
+// ---------- 记录实际操作 ----------
+const OPS = "docs/规律库/daily/实际操作.csv";
+const OPH = "执行日,依据日报,建议现货,实际现货,建议空单,实际空单,数量,与建议,操作说明,偏离原因,记录时间";
+let LOGROWS = null, SUG = null;
+const todayBJ = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
+async function loadOps() {
+  if (!$("opd").value) $("opd").value = todayBJ();
+  await loadSugg();
+  try {
+    const t = (await raw(OPS)).replace(/^\ufeff/, "").trim().split("\n").map(parseCsv);
+    const h = t[0], cols = ["执行日", "建议现货", "实际现货", "实际空单", "与建议", "操作说明"].map((c) => h.indexOf(c));
+    $("oplist").innerHTML = `<table><tr>${cols.map((c) => `<th>${esc(h[c])}</th>`).join("")}</tr>${t.slice(1).reverse().slice(0, 30).map((r) => `<tr>${cols.map((c) => `<td>${esc(r[c])}</td>`).join("")}</tr>`).join("")}</table>`;
+  } catch (e) { $("oplist").innerHTML = "<p class='muted'>还没有记录</p>"; }
+}
+async function loadSugg() {
+  try {
+    if (!LOGROWS) { const t = (await raw(`${BASE}/判断日志.csv`)).replace(/^\ufeff/, "").trim().split("\n").map(parseCsv); LOGROWS = { h: t[0], rows: t.slice(1) }; }
+    const { h, rows } = LOGROWS, d = $("opd").value, i = (c) => h.indexOf(c);
+    // 依据：执行日之前最近一份日报（收盘后出报告，次日执行）；同一天有多份时取 Claude 的
+    const prior = rows.filter((r) => r[i("日期")] < d).sort((a, b) => (a[i("日期")] + (a[i("分析来源")] === "claude-session" ? "1" : "0")).localeCompare(b[i("日期")] + (b[i("分析来源")] === "claude-session" ? "1" : "0")));
+    const r = prior[prior.length - 1];
+    if (!r) { SUG = null; $("opsugg").textContent = "执行日之前没有日报建议"; return; }
+    SUG = { day: r[i("日期")], spot: r[i("建议仓位")], short: r[i("空单建议")] || "不开空" };
+    $("opsugg").innerHTML = `依据 <b>${esc(SUG.day)}</b> 日报：现货 <b>${esc(SUG.spot)}</b>，空单 <b>${esc(SUG.short)}</b>`;
+    checkDev();
+  } catch (e) { $("opsugg").textContent = "无法读取判断日志：" + e.message; }
+}
+function devText() {
+  if (!SUG) return "";
+  const m = (SUG.spot.match(/\d+/g) || []).map(Number), v = $("opspot").value === "" ? null : Number($("opspot").value);
+  const out = [];
+  if (v !== null && m.length) out.push(v < m[0] ? `现货低于建议（${v}% < ${m[0]}%）` : v > m[m.length - 1] ? `现货高于建议（${v}% > ${m[m.length - 1]}%）` : "现货一致");
+  const sh = $("opshort").value, sugShort = !/不开空/.test(SUG.short);
+  if (sh === "期货空单" || sh === "认沽") out.push(sugShort ? "空单一致" : "无开空信号却开空");
+  else if (sh === "无") out.push(sugShort ? "有空单信号未执行" : "空单一致");
+  else out.push(sugShort ? "有空单信号时平仓" : "空单一致（平仓）");
+  return out.join("；");
+}
+function checkDev() { const t = devText(); $("opdev").innerHTML = t ? `<span class="${/低于|高于|却|未执行|时平仓/.test(t) ? "bad" : "ok"}">${esc(t)}</span>` : ""; }
+async function saveOp() {
+  if ($("opspot").value === "") return alert("请填写现货实际仓位");
+  const row = csvLine([$("opd").value, SUG ? SUG.day : "", SUG ? SUG.spot : "", $("opspot").value + "%", SUG ? SUG.short : "",
+    $("opshort").value, $("opn").value || "", devText(), $("opnote").value, $("opwhy").value, new Date().toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }).slice(0, 16)]);
+  try {
+    await updateFile(OPS, (old) => (old || OPH + "\n").replace(/\n?$/, "\n") + row + "\n", "App记录实际操作 " + $("opd").value);
+    ["opspot", "opn", "opnote", "opwhy"].forEach((id) => $(id).value = "");
+    $("opdev").innerHTML = "<span class='ok'>已保存</span>";
+    loadOps();
+  } catch (e) { alert("保存失败：" + e.message); }
+}
 
 function urlB64(s) { const p = "=".repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
 async function enablePush() {
