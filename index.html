@@ -46,7 +46,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;b
     <div class="bar"><button class="btn sec" onclick="showReport()">最新</button><button class="btn sec" onclick="showList('dated')">历史日报</button><button class="btn sec" onclick="openFile('1-历史样本库.html')">样本库</button></div>
     <iframe id="frame" title="报告"></iframe>
   </section>
-  <section class="pane" id="p-events"><div class="card"><h2>待确认的事件</h2><div class="muted">大模型建议纳入或标为“待确认”、你还没有决定的事件。宏观事件决定加仓和开空，负面冲击要当晚确认，次日开盘才能执行。</div><div id="evlist" style="margin-top:8px"></div><button class="btn wide" id="recalc" style="display:none" onclick="dispatch('recompute')">按确认的事件重新分析</button></div></section>
+  <section class="pane" id="p-events"><div class="card"><h2>待确认的事件</h2><div class="muted">大模型建议纳入或标为“待确认”、你还没有决定的事件。宏观事件决定加仓和开空，负面冲击要当晚确认，次日开盘才能执行。</div><div id="evlist" style="margin-top:8px"></div><div id="candlist"></div><button class="btn wide" id="recalc" style="display:none" onclick="dispatch('recompute')">按确认的事件重新分析</button></div></section>
   <section class="pane" id="p-op">
     <div class="card"><h2>记录实际操作</h2>
       <div id="opsugg" class="muted">—</div>
@@ -210,8 +210,26 @@ async function loadEvents() {
         <span class="muted">反应日</span><input type="date" id="rd${i}" value="${nextWeekday(day)}"></div>
         <div class="row"><button class="btn green" onclick="decide(${i},'是')">纳入</button><button class="btn sec" onclick="decide(${i},'否')">不纳入</button></div></div>`;
     }).join("") : `<p class="muted">${day} 没有待确认的事件。</p>`;
+    // 候选关注板块
+    const W = JSON.parse(await raw(`${BASE}/关注板块.json`)), have = W.map((w) => w.name);
+    const ign = JSON.parse(localStorage.getItem("ignSec") || "[]");
+    CANDS = (a?.sector_candidates || []).filter((c) => c["板块"] && !have.some((h) => similar(h, c["板块"])) && !ign.includes(c["板块"]));
+    $("candlist").innerHTML = CANDS.length ? `<h2 style="margin-top:14px">候选关注板块</h2><div class="muted">大模型根据新闻提出；加入后在日报“关注板块”中跟踪，不改变仓位。</div>` + CANDS.map((c, i) =>
+      `<div class="ev" id="cd${i}"><div class="t">${esc(c["板块"])}</div><div class="muted">${esc(c["理由"])}　来源：${esc(c["来源"])}</div>
+       <div class="row"><button class="btn green" onclick="addWatch(${i})">加入关注</button><button class="btn sec" onclick="ignWatch(${i})">忽略</button></div></div>`).join("") : "";
+    $("evn").textContent = (EVS.length + CANDS.length) ? `（${EVS.length + CANDS.length}）` : "";
   } catch (e) { $("evlist").innerHTML = `<p class="muted">无法读取：${esc(e.message)}</p>`; }
 }
+let CANDS = [];
+async function addWatch(i) {
+  const c = CANDS[i], today = todayBJ();
+  try {
+    await updateFile(`${BASE}/关注板块.json`, (old) => { const W = JSON.parse(old || "[]"); W.push({ name: c["板块"], source: {}, status: "观察", thesis: c["理由"], start: today,
+      invalid_tech: { metric: "ex60", below: -5, text: `${c["板块"]}相对沪指60日超额跌破−5%` }, invalid_macro: [], keywords: [c["板块"]], note: `大模型${today}根据新闻提出：${c["来源"] || ""}` }); return JSON.stringify(W, null, 1); }, `App加入关注板块：${c["板块"]}`);
+    $("cd" + i).innerHTML = `<div class="ok">已加入关注：${esc(c["板块"])}（对应指数可在会话中指定）</div>`;
+  } catch (e) { alert("写入失败：" + e.message); }
+}
+function ignWatch(i) { const ign = JSON.parse(localStorage.getItem("ignSec") || "[]"); ign.push(CANDS[i]["板块"]); localStorage.setItem("ignSec", JSON.stringify(ign)); $("cd" + i).innerHTML = `<div class="muted">已忽略：${esc(CANDS[i]["板块"])}</div>`; }
 async function decide(i, yes) {
   const n = EVS[i], cat = $("cat" + i).value, rd = $("rd" + i).value;
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
