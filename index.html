@@ -74,6 +74,8 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;b
       <button class="btn wide sec" onclick="editC()">添加主要矛盾</button><div id="cform"></div></div>
     <div class="card"><h2>关注板块</h2><div class="muted">决定仓位里持有什么；新加的板块在下一次运行后才有数据。</div><div id="wlist"></div>
       <button class="btn wide sec" onclick="editW()">添加关注板块</button><div id="wform"></div></div>
+    <div class="card"><h2>大事日历</h2><div class="muted">日报列出未来约4个月的大事；大模型从新闻补充的日期在这里确认后加入。</div><div id="calcand"></div><div id="callist"></div>
+      <button class="btn wide sec" onclick="editCal()">添加日期</button><div id="calform"></div></div>
     <div class="card"><h2>复盘与重测</h2><div class="list" id="reviews"></div></div>
     <div class="card"><h2>判断日志</h2><div class="tw" id="log"></div></div>
     <div class="card"><h2>推送通知</h2><div class="muted">报告出来、出现待确认的负面冲击时通知你。需先把本页“添加到主屏幕”，再从主屏幕图标打开后开启。</div><button class="btn wide sec" id="pushbtn" onclick="enablePush()">开启推送通知</button></div>
@@ -229,7 +231,7 @@ async function addWatch(i) {
   const c = CANDS[i], today = todayBJ();
   try {
     await updateFile(`${BASE}/关注板块.json`, (old) => { const W = JSON.parse(old || "[]"); W.push({ name: c["板块"], source: {}, status: "观察", thesis: c["理由"], start: today,
-      invalid_tech: { metric: "ex60", below: -5, text: `${c["板块"]}相对沪指60日超额跌破−5%` }, invalid_macro: [], keywords: [c["板块"]], note: `大模型${today}根据新闻提出：${c["来源"] || ""}` }); return JSON.stringify(W, null, 1); }, `App加入关注板块：${c["板块"]}`);
+      invalid_tech: { metric: "ex60", below: -5, text: `${c["板块"]}相对沪指60日超额跌破−5个百分点` }, invalid_macro: [], keywords: [c["板块"]], note: `大模型${today}根据新闻提出：${c["来源"] || ""}` }); return JSON.stringify(W, null, 1); }, `App加入关注板块：${c["板块"]}`);
     $("cd" + i).innerHTML = `<div class="ok">已加入关注：${esc(c["板块"])}（对应指数可在会话中指定）</div>`;
   } catch (e) { alert("写入失败：" + e.message); }
 }
@@ -312,8 +314,52 @@ async function saveW(i) {
 async function toggleW(i) { WL[i].status = WL[i].status === "停用" ? "关注" : "停用"; await saveList(WF2, WL, `App更改关注板块状态：${WL[i].name}`); }
 async function delW(i) { if (!confirm(`删除关注板块“${WL[i].name}”？（验证记录保留）`)) return; WL[i].status = "已删除"; await saveList(WF2, WL, `App删除关注板块：${WL[i].name}`); }
 
+// ---------- 大事日历 ----------
+const CALF = `${BASE}/大事日历.json`;
+let KL = [], CALC = [];
+async function loadCal() {
+  try { KL = JSON.parse(await raw(CALF)); } catch (e) { KL = []; }
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = KL.map((x, i) => [x, i]).filter(([x]) => x.status !== "已删除" && x.date >= today).sort((p, q) => p[0].date.localeCompare(q[0].date));
+  $("callist").innerHTML = rows.map(([x, i]) => `<div class="ev"><div class="t">${esc(x.date)} ${esc(x.name)}${x.status === "预计" ? ' <span class="chip">预计</span>' : ""}</div>
+    <div class="muted">${esc(x.type || "")}${x.note ? "；" + esc(x.note) : ""}</div><div class="row"><button class="btn red" onclick="delCal(${i})">删除</button></div></div>`).join("") || "<p class='muted'>还没有</p>";
+  let a = null;
+  try {
+    if (!ST) ST = JSON.parse(await raw(`${BASE}/reports/status.json`));
+    for (const p of ["claude", "deepseek"]) { try { a = JSON.parse(await raw(`${BASE}/analysis/${ST.asof}.${p}.json`)); break; } catch (e) { } }
+  } catch (e) { }
+  CALC = ((a && a.calendar_add) || []).filter((c) => c && c.date >= today && !KL.some((x) => x.status !== "已删除" && x.date === c.date && similar(x.name, c.name)));
+  $("calcand").innerHTML = CALC.map((c, i) => `<div class="ev" id="kc${i}"><div class="t">${esc(c.date)} ${esc(c.name)}</div>
+    <div class="muted">大模型从新闻补充：${esc(c.note || "")}</div><div class="row"><button class="btn" onclick="addCalC(${i})">加入日历</button></div></div>`).join("");
+}
+async function saveCal(msg) { await updateFile(CALF, () => JSON.stringify(KL, null, 1), msg); await loadCal(); }
+async function addCalC(i) {
+  const c = CALC[i];
+  KL.push({ date: c.date, name: c.name, type: c.type || "", status: "已定", note: c.note || "", source: "大模型从新闻补充，用户在App确认" });
+  try { await saveCal(`App加入大事日历：${c.name}`); } catch (e) { alert("保存失败：" + e.message); }
+}
+function editCal() {
+  $("calform").innerHTML = `<div class="ev"><input type="date" id="k_date"><input id="k_name" placeholder="事项，如：政治局会议" style="width:100%;margin-top:6px">
+    <select id="k_type" style="margin-top:6px">${["中国政策", "中国数据", "海外央行", "海外事件", "期货期权", "A股", "其他"].map((t) => `<option>${t}</option>`).join("")}</select>
+    <input id="k_note" placeholder="说明或来源" style="width:100%;margin-top:6px">
+    <label class="muted" style="display:block;margin-top:6px"><input type="checkbox" id="k_est"> 日期尚未公布（预计）</label>
+    <button class="btn" style="margin-top:6px" onclick="addCal()">保存</button></div>`;
+}
+async function addCal() {
+  const date = $("k_date").value, name = $("k_name").value.trim();
+  if (!date || !name) return alert("请填日期和事项");
+  KL.push({ date, name, type: $("k_type").value, status: $("k_est").checked ? "预计" : "已定", note: $("k_note").value.trim(), source: "用户在App添加" });
+  try { await saveCal(`App添加大事日历：${name}`); $("calform").innerHTML = "<div class='ok'>已保存，下一次运行后进入日报</div>"; } catch (e) { alert("保存失败：" + e.message); }
+}
+async function delCal(i) {
+  if (!confirm(`删除“${KL[i].name}”？`)) return;
+  KL[i].status = "已删除";
+  try { await saveCal(`App删除大事日历：${KL[i].name}`); } catch (e) { alert("保存失败：" + e.message); }
+}
+
 async function loadMore() {
   loadManage();
+  loadCal();
   try {
     const names = (await listReports()).filter((n) => /^[34]-/.test(n)).sort().reverse();
     $("reviews").innerHTML = names.length ? names.map((n) => `<a href="#" onclick="document.querySelector('nav button').click();openFile('${n}');return false">${n.replace(".html", "").replace(/^\d-/, "")}</a>`).join("") : "<p class='muted'>暂无</p>";
