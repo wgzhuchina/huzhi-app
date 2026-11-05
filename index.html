@@ -46,7 +46,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 3px;b
     <div class="bar"><button class="btn sec" onclick="showReport()">最新</button><button class="btn sec" onclick="showList('dated')">历史日报</button><button class="btn sec" onclick="openFile('1-历史样本库.html')">样本库</button></div>
     <iframe id="frame" title="报告"></iframe>
   </section>
-  <section class="pane" id="p-events"><div class="card"><h2>待确认的事件</h2><div class="muted">大模型建议纳入或标为“待确认”、你还没有决定的事件。宏观事件决定加仓和开空，负面冲击要当晚确认，次日开盘才能执行。</div><div id="evlist" style="margin-top:8px"></div><div id="candlist"></div><button class="btn wide" id="recalc" style="display:none" onclick="dispatch('recompute')">按确认的事件重新分析</button></div></section>
+  <section class="pane" id="p-events"><div class="card"><h2>待确认的事件</h2><div class="muted">近30天大模型建议纳入或标为“待确认”、你还没有决定的事件，可迟到确认；下方已决定的事件也可更改。宏观事件决定加仓和开空，负面冲击要当晚确认，次日开盘才能执行。</div><div id="evlist" style="margin-top:8px"></div><div id="candlist"></div><div id="declist"></div><button class="btn wide" id="recalc" style="display:none" onclick="dispatch('recompute')">按确认的事件重新分析</button></div></section>
   <section class="pane" id="p-op">
     <div class="card"><h2>记录实际操作</h2>
       <div id="opsugg" class="muted">—</div>
@@ -197,25 +197,39 @@ function grams(s) { const t = String(s).replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, ""
 function similar(a, b) { const x = grams(a), y = grams(b); if (!x.size || !y.size) return false; let n = 0; x.forEach((g) => { if (y.has(g)) n++; }); return n / Math.min(x.size, y.size) >= 0.5; }
 function nextWeekday(d) { const x = new Date(d + "T00:00:00"); do { x.setDate(x.getDate() + 1); } while ([0, 6].includes(x.getDay())); return x.toISOString().slice(0, 10); }
 function csvLine(a) { return a.map((v) => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v).join(","); }
-let EVS = [];
+let EVS = [], WIF = {}, DEC = [];
+function wifHtml(cat) { const w = WIF[cat]; return w ? `<div class="muted">历史：${esc(w.history)}</div><div class="muted"><b>若纳入，按今天的状态：</b>${esc(w.effect)}</div>` : ""; }
 async function loadEvents() {
   try {
     if (!ST) ST = JSON.parse(await raw(`${BASE}/reports/status.json`));
     const day = ST.asof;
-    let a = null;
-    for (const p of ["deepseek", "claude"]) { try { a = JSON.parse(await raw(`${BASE}/analysis/${day}.${p}.json`)); break; } catch (e) { } }
+    let a = null, P = null;
+    for (const p of ["claude", "deepseek"]) { try { a = JSON.parse(await raw(`${BASE}/analysis/${day}.${p}.json`)); break; } catch (e) { } }
+    try { P = JSON.parse(await raw(`${BASE}/reports/pending.json`)); } catch (e) { }
     const lib = await raw("docs/规律库/data/事件库.csv");
     const done = lib.replace(/^\ufeff/, "").trim().split("\n").slice(1).map((l) => parseCsv(l)[2] || "");
-    EVS = (a?.news || []).filter((n) => /^(是|待确认)/.test(n["是否建议纳入"] || "") && !done.some((d) => similar(d, n["事件"])));
-    $("evn").textContent = EVS.length ? `（${EVS.length}）` : "";
+    WIF = P?.whatif || {};
+    // 近30天还没有决定的事件（可迟到确认）；旧版没有 pending.json 时只看当天
+    EVS = (P ? P.pending : (a?.news || []).filter((n) => /^(是|待确认)/.test(n["是否建议纳入"] || "")).map((n) => ({ ...n, day })))
+      .filter((n) => !done.some((d) => similar(d, n["事件"])));
     $("evlist").innerHTML = EVS.length ? EVS.map((n, i) => {
       const cat = CATS.find((c) => (n["建议类别"] || "").includes(c)) || "其他";
+      const late = n.day < day ? `<span class="bad">（${n.day} 提出，迟到确认：生效期仍从反应日算起，已过去的天数不补；负面冲击错过反应日开盘不追空）</span>` : "";
       return `<div class="ev" id="ev${i}"><div class="t">${esc(n["事件"])}</div>
-        <div class="muted">大模型建议：${esc(n["建议类别"])}·${esc(n["是否建议纳入"])}　来源：${esc(n["来源"])}</div>
-        <div class="row"><select id="cat${i}">${CATS.map((c) => `<option ${c === cat ? "selected" : ""}>${c}</option>`).join("")}</select>
-        <span class="muted">反应日</span><input type="date" id="rd${i}" value="${nextWeekday(day)}"></div>
-        <div class="row"><button class="btn green" onclick="decide(${i},'是')">纳入</button><button class="btn sec" onclick="decide(${i},'否')">不纳入</button></div></div>`;
-    }).join("") : `<p class="muted">${day} 没有待确认的事件。</p>`;
+        <div class="muted">${esc(n.day)} 大模型建议：${esc(n["建议类别"])}·${esc(n["是否建议纳入"])}　来源：${esc(n["来源"])}${late}</div>
+        <div id="wif${i}">${wifHtml(cat)}</div>
+        <div class="row"><select id="cat${i}" onchange="$('wif${i}').innerHTML=wifHtml(this.value)">${CATS.map((c) => `<option ${c === cat ? "selected" : ""}>${c}</option>`).join("")}</select>
+        <span class="muted">反应日</span><input type="date" id="rd${i}" value="${nextWeekday(n.day)}"></div>
+        <div class="row"><button class="btn green" onclick="decide(${i},'是',this)">纳入</button><button class="btn sec" onclick="decide(${i},'否',this)">不纳入</button></div></div>`;
+    }).join("") : `<p class="muted">近30天没有待确认的事件。</p>`;
+    // 近60天已决定的事件：可更改（追加一行新决定，以最后一次为准）
+    DEC = P?.decided || [];
+    $("declist").innerHTML = DEC.length ? `<h2 style="margin-top:14px">已决定的事件（可更改）</h2><div class="muted">以最后一次决定为准；改为纳入后，规则从反应日起生效，已过去的天数不补。</div>` + DEC.map((d, i) =>
+      `<div class="ev" id="dc${i}"><div class="t">${esc(d["事件"])}</div><div class="muted">${esc(d["日期"])} 决定：<b>${d["是否纳入"] === "是" ? "纳入（" + esc(d["类别"]) + "，反应日" + esc(d["反应日"]) + "）" : "不纳入"}</b>　${esc(d["依据或说明"]).slice(0, 80)}</div>
+       <details><summary class="muted">更改</summary>${wifHtml(CATS.find((c) => (d["类别"] || "").includes(c)) || "")}
+       <div class="row"><select id="dcat${i}">${CATS.map((c) => `<option ${(d["类别"] || "").includes(c) ? "selected" : ""}>${c}</option>`).join("")}</select>
+       <span class="muted">反应日</span><input type="date" id="drd${i}" value="${esc(d["反应日"] || nextWeekday(d["日期"]))}"></div>
+       <div class="row"><button class="btn ${d["是否纳入"] === "是" ? "sec" : "green"}" onclick="redecide(${i},'${d["是否纳入"] === "是" ? "否" : "是"}',this)">改为${d["是否纳入"] === "是" ? "不纳入" : "纳入"}</button></div></details></div>`).join("") : "";
     // 候选关注板块
     const W = JSON.parse(await raw(`${BASE}/关注板块.json`)), have = W.map((w) => w.name);
     const ign = JSON.parse(localStorage.getItem("ignSec") || "[]");
@@ -236,15 +250,31 @@ async function addWatch(i) {
   } catch (e) { alert("写入失败：" + e.message); }
 }
 function ignWatch(i) { const ign = JSON.parse(localStorage.getItem("ignSec") || "[]"); ign.push(CANDS[i]["板块"]); localStorage.setItem("ignSec", JSON.stringify(ign)); $("cd" + i).innerHTML = `<div class="muted">已忽略：${esc(CANDS[i]["板块"])}</div>`; }
-async function decide(i, yes) {
+async function writeEvent(row, msg) {
+  await updateFile("docs/规律库/data/事件库.csv", (old) => (old || "日期,反应日,事件,类别,是否纳入,依据或说明,来源可靠度\n").replace(/\n?$/, "\n") + row + "\n", msg);
+}
+async function decide(i, yes, btn) {
   const n = EVS[i], cat = $("cat" + i).value, rd = $("rd" + i).value;
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
-  const row = csvLine([today, yes === "是" ? rd : "", n["事件"], cat, yes, `用户${today}在App中确认；大模型建议：${n["建议类别"]}·${n["是否建议纳入"]}`, n["来源"] || ""]);
+  const row = csvLine([today, yes === "是" ? rd : "", n["事件"], cat, yes, `用户${today}在App中确认${n.day && n.day < today ? "（" + n.day + "提出）" : ""}；大模型建议：${n["建议类别"]}·${n["是否建议纳入"]}`, n["来源"] || ""]);
+  $("ev" + i).querySelectorAll("button").forEach((b) => b.disabled = true);  // 防止重复点击写入多行
   try {
-    await updateFile("docs/规律库/data/事件库.csv", (old) => (old || "日期,反应日,事件,类别,是否纳入,依据或说明,来源可靠度\n").replace(/\n?$/, "\n") + row + "\n", `App确认事件：${yes === "是" ? "纳入" : "不纳入"}`);
+    await writeEvent(row, `App确认事件：${yes === "是" ? "纳入" : "不纳入"}`);
     $("ev" + i).innerHTML = `<div class="muted">${esc(n["事件"])}</div><div class="${yes === "是" ? "ok" : ""}">已记录：${yes === "是" ? "纳入（" + cat + "，反应日" + rd + "）" : "不纳入"}</div>`;
     $("recalc").style.display = "block";
-  } catch (e) { alert("写入失败：" + e.message); }
+  } catch (e) { $("ev" + i).querySelectorAll("button").forEach((b) => b.disabled = false); alert("写入失败：" + e.message); }
+}
+async function redecide(i, yes, btn) {
+  const d = DEC[i], cat = $("dcat" + i).value, rd = $("drd" + i).value;
+  if (!confirm(`把“${d["事件"].slice(0, 30)}…”改为${yes === "是" ? "纳入" : "不纳入"}？`)) return;
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
+  const row = csvLine([today, yes === "是" ? rd : "", d["事件"], cat, yes, `用户${today}在App中更改决定（原为${d["是否纳入"] === "是" ? "纳入" : "不纳入"}，${d["日期"]}）`, d["来源可靠度"] || ""]);
+  btn.disabled = true;
+  try {
+    await writeEvent(row, `App更改事件决定：${yes === "是" ? "纳入" : "不纳入"}`);
+    $("dc" + i).innerHTML = `<div class="muted">${esc(d["事件"])}</div><div class="ok">已改为：${yes === "是" ? "纳入（" + cat + "，反应日" + rd + "）" : "不纳入"}</div>`;
+    $("recalc").style.display = "block";
+  } catch (e) { btn.disabled = false; alert("写入失败：" + e.message); }
 }
 
 // ---------- 主要矛盾与关注板块的管理 ----------
